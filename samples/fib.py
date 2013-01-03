@@ -31,8 +31,6 @@ def fib(n):
 
             res = pysplash.wait_jobs(jobs, collect_results=True)
 
-            log.debug("Back from wait with %s" % res)
-
             return sum(res)
 
 
@@ -44,9 +42,9 @@ if __name__ == "__main__":
     with rq.Connection(con):
         q = rq.Queue(queue_name)
 
-        job = q.enqueue_call(fib, (10,))
+        job = q.enqueue_call(fib, (4,))
 
-        p = pysplash.Pool([queue_name], scale_frequency=2.)
+        p = pysplash.Pool([queue_name], scale_frequency=2., zombie_timeout=15)
 
         log.info("Starting pool")
 
