@@ -7,6 +7,5 @@ venv
 dist
 build
 *.log.*
-*.txt
 *.pkl
 *.log
