@@ -1,0 +1,12 @@
+*.pyc
+*.vim
+venv
+*.so
+*.py[oc]
+*.egg-info
+dist
+build
+*.log.*
+*.txt
+*.pkl
+*.log
