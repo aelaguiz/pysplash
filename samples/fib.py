@@ -3,10 +3,11 @@
 import pysplash
 import rq
 import redis
+import uuid
 
 log = pysplash.log.logger()
 
-queue_name = 'pysplash_fib'
+queue_name = str(uuid.uuid4())
 
 
 def fib(n):
@@ -28,7 +29,7 @@ def fib(n):
             log.debug("Waiting for results of %s & %s" % (
                 n-1, n-2))
 
-            res = pysplash.wait_jobs(jobs)
+            res = pysplash.wait_jobs(jobs, collect_results=True)
 
             log.debug("Back from wait with %s" % res)
 
@@ -43,9 +44,9 @@ if __name__ == "__main__":
     with rq.Connection(con):
         q = rq.Queue(queue_name)
 
-        job = q.enqueue_call(fib, (1000,))
+        job = q.enqueue_call(fib, (10,))
 
-        p = pysplash.Pool([queue_name], zombie_timeout=5)
+        p = pysplash.Pool([queue_name], scale_frequency=2.)
 
         log.info("Starting pool")
 
