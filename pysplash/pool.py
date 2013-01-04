@@ -57,7 +57,7 @@ def _worker(wname, pool_queue, args):
             host=args['host'], port=args['port'], password=args['password'],
             db=args['db'])
 
-        queues = [rq.Queue(q) for q in args['queues']]
+        queues = [rq.Queue(q, connection=con) for q in args['queues']]
 
         rqw = Worker(
             queues, name="RQW:" + wname, exc_handler=exc_handler,
@@ -130,7 +130,7 @@ class Pool:
         self.con = redis.StrictRedis(
             host=self.args['host'], port=self.args['port'], password=self.args['password'],
             db=self.args['db'])
-        self.rqs = [rq.Queue(q) for q in self.args['queues']]
+        self.rqs = [rq.Queue(q, connection=self.con) for q in self.args['queues']]
 
 
 
