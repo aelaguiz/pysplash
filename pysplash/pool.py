@@ -3,6 +3,7 @@
 import time
 import os
 import signal
+import random
 import redis
 import rq
 import psutil
@@ -139,6 +140,8 @@ class Pool:
 
         self.args['main_pid'] = os.getpid()
 
+        # Workers we've scaled down and are waiting on exiting
+        self.waiting_scale_down = []
 
         self.stats = []
         self.pool_queue = Queue()
@@ -200,8 +203,6 @@ class Pool:
             try:
                 obj = self.pool_queue.get_nowait()
 
-                log.debug("Got obj %s" % obj)
-
                 wname = obj['wname']
 
                 if wname not in self.workers:
@@ -215,7 +216,7 @@ class Pool:
                     worker['last_update'] = time.time()
                 elif obj['msg'] == 'exit':
                     log.debug("Worker %s exited" % worker['w'].name)
-                    del self.workers[wname]
+                    self.on_worker_exit(wname)
                 elif obj['msg'] == 'started':
                     worker['state'] = WorkerState.RUNNING
                     log.debug("Worker %s became ready" % worker['w'].name)
@@ -234,6 +235,15 @@ class Pool:
             cnt += queue.count
 
         return cnt
+
+    def on_worker_exit(self, wname):
+        self.acct.add_exited()
+
+        worker = self.workers[wname]
+        if worker in self.waiting_scale_down:
+            self.waiting_scale_down.remove(worker)
+
+        del self.workers[wname]
 
     def update_stats(self, num_running, num_starting):
         cpu_pct = psutil.cpu_percent()
@@ -290,6 +300,9 @@ class Pool:
 
         delta = min(avail_workers, self.max_per_scale)
 
+        self.scale_pool_delta(total_workers, delta)
+
+    def scale_pool_delta(self, total_workers, delta):
         if delta > 0:
             log.debug("Starting %s workers" % delta)
 
@@ -297,13 +310,37 @@ class Pool:
                 self.add_worker()
         elif delta < 0:
             log.debug("Should scale down the number of workers")
+            if self.waiting_scale_down:
+                log.debug("Already waiting on %s to scale down" % (
+                    len(self.waiting_scale_down)))
+                return
+
+            to_kill = min(abs(delta), self.max_procs)
+
+            # Make sure we leave the desired min procs running
+            if to_kill >= (total_workers - self.min_procs):
+                # 8 Running 6 To kill 2 Min = 0 = 6
+                # 8 Running 8 to kill 2 min = -2 = 6
+                to_kill += (total_workers - to_kill) - self.min_procs
+
+            if to_kill <= 0:
+                log.debug(
+                    "Cannot kill any more, would leave us below min procs")
+                return
+
+            for wname in random.sample(self.workers.keys(), to_kill):
+                worker = self.workers[wname]
+                self.waiting_scale_down.append(worker)
+                self.terminate_worker(worker)
 
 
     def update_workers(self):
         num_running = 0
         num_starting = 0
 
-        for wname, worker in self.workers.iteritems():
+        waiting_terminate = 0
+
+        for wname, worker in self.workers.items():
             state = worker['state']
             since_update = time.time() - worker['last_update']
 
@@ -313,6 +350,8 @@ class Pool:
                         "Worker %s didn't terminate, sending SIGKILL" % (
                             wname))
                     self.really_terminate_worker(worker)
+                else:
+                    waiting_terminate += 1
             elif state == WorkerState.RUNNING:
                 if since_update > self.zombie_timeout:
                     log.info("Worker %s zombied" % (worker['w'].name))
@@ -322,6 +361,8 @@ class Pool:
                     num_running += 1
             elif state == WorkerState.STARTING:
                 num_starting += 1
+
+        self.acct.set_waiting_terminate(waiting_terminate)
 
         return num_running, num_starting
 
@@ -333,10 +374,11 @@ class Pool:
     def really_terminate_worker(self, worker):
         try:
             os.kill(worker['w'].pid, signal.SIGKILL)
+            os.kill(worker['w'].pid, signal.SIGKILL)
         except:
             pass
         finally:
-            del self.workers[worker['wname']]
+            self.on_worker_exit(worker['w'].name)
 
     def add_worker(self):
         wname = "PySplash-%s" % self.count

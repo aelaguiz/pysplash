@@ -11,6 +11,10 @@ For instance, here it is keeping my laptop cpu @ 80% steadily:
 
 ![80 Percent](https://raw.github.com/aelaguiz/pysplash/master/doc/pct_80.jpg)
 
+This is an example of workers which pause for 10 seconds then go to 100% cpu. They are spun up because work is outstanding in the queue and no CPU is being used (sleeping). Once they become active, PySplash starts to spin workers down. Eventually they exit on their own (finished with work), and there are none running. Then PySplash starts to spin them up again, as the work queue has jobs outstanding - but the new ones are paused. This repeats and produces this CPU wave:
+
+![Wave](https://raw.github.com/aelaguiz/pysplash/master/doc/wave.jpg)
+
 Example
 -------
 
