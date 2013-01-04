@@ -60,7 +60,7 @@ def _worker(wname, pool_queue, args):
         queues = [rq.Queue(q, connection=con) for q in args['queues']]
 
         rqw = Worker(
-            queues, name="RQW:" + wname, exc_handler=exc_handler,
+            queues, exc_handler=exc_handler,
             work_callback=work_callback,
             connection=con)
         rqw.log = log
