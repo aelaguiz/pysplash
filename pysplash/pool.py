@@ -53,6 +53,16 @@ def _worker(wname, pool_queue, args):
             else:
                 pool_queue.put(msg_update(wname))
 
+        def status_callback():
+            """
+            Controls execution of worker. Worker will exit when queue
+            is empty if this callback returns False
+            """
+            if args['retire_idle']:
+                return False
+
+            return True
+
         con = redis.StrictRedis(
             host=args['host'], port=args['port'], password=args['password'],
             db=args['db'])
@@ -60,7 +70,9 @@ def _worker(wname, pool_queue, args):
         queues = [rq.Queue(q, connection=con) for q in args['queues']]
 
         rqw = Worker(
-            queues, exc_handler=exc_handler,
+            queues,
+            status_callback=status_callback,
+            exc_handler=exc_handler,
             work_callback=work_callback,
             connection=con)
         rqw.log = log
@@ -115,6 +127,10 @@ class Pool:
         self.max_mem = kwargs.setdefault('max_mem', 80.0)
 
         self.args = kwargs
+
+        # Should workers without a job to do be spun down immediately?
+        self.args['retire_idle'] = kwargs.setdefault('retire_idle', True)
+
         self.args['queues'] = queues
         self.args['host'] = host
         self.args['port'] = port
@@ -254,8 +270,8 @@ class Pool:
                 mem_per_running += ((mem_pct - self.baseline_mem) / float(num_running))
 
 
-        avg_cpu_per_running = float(cpu_per_running) / len(self.stats)
-        avg_mem_per_running = float(mem_per_running) / len(self.stats)
+        avg_cpu_per_running = max(float(cpu_per_running) / len(self.stats), 0.01)
+        avg_mem_per_running = max(float(mem_per_running) / len(self.stats), 0.01)
 
         cpu_pct = psutil.cpu_percent()
         mem_pct = psutil.virtual_memory().percent
@@ -315,7 +331,12 @@ class Pool:
         worker['w'].terminate()
 
     def really_terminate_worker(self, worker):
-        os.kill(worker['w'].pid, signal.SIGKILL)
+        try:
+            os.kill(worker['w'].pid, signal.SIGKILL)
+        except:
+            pass
+        finally:
+            del self.workers[worker['wname']]
 
     def add_worker(self):
         wname = "PySplash-%s" % self.count

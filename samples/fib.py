@@ -44,7 +44,9 @@ if __name__ == "__main__":
 
         job = q.enqueue_call(fib, (4,))
 
-        p = pysplash.Pool([queue_name], scale_frequency=2., zombie_timeout=15)
+        p = pysplash.Pool(
+            [queue_name], scale_frequency=2., zombie_timeout=15,
+            retire_idle=False)
 
         log.info("Starting pool")
 
