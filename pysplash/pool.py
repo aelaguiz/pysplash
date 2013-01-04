@@ -36,7 +36,7 @@ def _worker(wname, pool_queue, args):
         pool_queue.put(msg_started(wname))
 
         def exc_handler(job, *args):
-            pass
+            log.error("Job %s excepted %s" % (job.id, args))
 
         def work_callback(job):
             log.debug("Worker %s completed job %s" % (
@@ -97,6 +97,12 @@ class Pool:
         # Maximum number of seconds waiting before we send a kill -9
         self.terminate_seconds = kwargs.setdefault('terminate_seconds', 10.0)
 
+        # Maximum cpu utilization
+        self.max_cpu = kwargs.setdefault('max_cpu', 80.0)
+
+        # Maximum mem utilization
+        self.max_mem = kwargs.setdefault('max_mem', 80.0)
+
         self.args = kwargs
         self.args['queues'] = queues
         self.args['host'] = host
@@ -116,7 +122,10 @@ class Pool:
         self.rqs = [rq.Queue(q) for q in self.args['queues']]
 
 
+
     def start(self):
+        self.establish_baseline()
+
         while True:
             num_running, num_starting = self.update_workers()
             self.update_stats(num_running, num_starting)
@@ -133,6 +142,26 @@ class Pool:
 
             time.sleep(1)
             self.process_queue()
+
+    def establish_baseline(self):
+        cpu = []
+        mem = []
+
+        log.debug("Establishing a baseline reading for cpu & memory...")
+        for i in range(5):
+            cpu_pct = psutil.cpu_percent()
+            mem_pct = psutil.virtual_memory().percent
+
+            cpu.append(cpu_pct)
+            mem.append(mem_pct)
+
+            time.sleep(1)
+
+        self.baseline_cpu = sum(cpu) / float(len(cpu))
+        self.baseline_mem = sum(mem) / float(len(mem))
+
+        log.debug("Baseline cpu & memory reading: %s CPU %s Memory" % (
+            self.baseline_cpu, self.baseline_mem))
 
     def process_queue(self):
         while True:
@@ -199,8 +228,8 @@ class Pool:
 
         for num_running, num_starting, cpu_pct, mem_pct in self.stats:
             if num_running:
-                cpu_per_running += (cpu_pct / float(num_running))
-                mem_per_running += (mem_pct / float(num_running))
+                cpu_per_running += ((cpu_pct - self.baseline_cpu) / float(num_running))
+                mem_per_running += ((mem_pct - self.baseline_mem) / float(num_running))
 
 
         avg_cpu_per_running = float(cpu_per_running) / len(self.stats)
@@ -209,21 +238,27 @@ class Pool:
         cpu_pct = psutil.cpu_percent()
         mem_pct = psutil.virtual_memory().percent
 
-        cpu_workers = 80. - cpu_pct / avg_cpu_per_running
-        mem_workers = 80. - mem_pct / avg_mem_per_running
+        log.debug("CPU %s Mem %s AvgC/R %s AvgM/R %s" % (
+            cpu_pct, mem_pct, avg_cpu_per_running, avg_mem_per_running))
+
+        cpu_workers = (self.max_cpu - cpu_pct) / avg_cpu_per_running
+        mem_workers = (self.max_mem - mem_pct) / avg_mem_per_running
 
         avail_workers = int(min(
             self.max_procs - total_workers, min(cpu_workers, mem_workers)))
 
-        log.debug("%s CPU/Worker %s Mem/Worker %s Potential Workers" % (
+        log.debug("%s CPU Bound Worker %s Mem Bound Worker %s Potential Workers" % (
             cpu_workers, mem_workers, avail_workers))
 
-        to_start = min(avail_workers, self.max_per_scale)
+        delta = min(avail_workers, self.max_per_scale)
 
-        log.debug("Starting %s workers" % to_start)
+        if delta > 0:
+            log.debug("Starting %s workers" % delta)
 
-        for i in range(to_start):
-            self.add_worker()
+            for i in range(delta):
+                self.add_worker()
+        elif delta < 0:
+            log.debug("Should scale down the number of workers")
 
 
     def update_workers(self):
