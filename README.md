@@ -7,6 +7,9 @@ Introduction
 ------------
 PySplash is intended to be used in a cluster environment where concurrency is high and resources are limited. It is designed to automatically scale up the number of processes on a system while not exceeding memory limitations.
 
+For instance, here it is keeping my laptop cpu @ 80% steadily:
+
+![80 Percent](https://raw.github.com/aelaguiz/pysplash/master/doc/pct_80.jpg)
 
 Example
 -------
