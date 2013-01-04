@@ -10,6 +10,7 @@ from Queue import Empty
 
 from .log import logger
 from .worker import Worker
+from .accounting import PoolAccounting
 
 from multiprocessing import Process, Queue
 
@@ -24,6 +25,10 @@ def msg_update(wname):
     return {'msg': 'update', 'pid': os.getpid(), 'wname': wname}
 
 
+def msg_failed(wname):
+    return {'msg': 'failed', 'pid': os.getpid(), 'wname': wname}
+
+
 def msg_started(wname):
     return {'msg': 'started', 'pid': os.getpid(), 'wname': wname}
 
@@ -35,14 +40,18 @@ def _worker(wname, pool_queue, args):
     try:
         pool_queue.put(msg_started(wname))
 
+
         def exc_handler(job, *args):
-            log.error("Job %s excepted %s" % (job.id, args))
+            log.error("Job %s Excepted" % (job.id))
 
         def work_callback(job):
-            log.debug("Worker %s completed job %s" % (
-                wname, job.id))
+            log.debug("Worker %s completed job %s %s" % (
+                wname, job.id, job.status))
 
-            pool_queue.put(msg_update(wname))
+            if job.status == rq.job.Status.FAILED:
+                pool_queue.put(msg_failed(wname))
+            else:
+                pool_queue.put(msg_update(wname))
 
         con = redis.StrictRedis(
             host=args['host'], port=args['port'], password=args['password'],
@@ -75,6 +84,8 @@ class Pool:
     def __init__(
         self, queues, host='localhost', port=6379, db=None,
             password=None, zombie_timeout=400, **kwargs):
+
+        self.acct = PoolAccounting()
 
         self.count = 0
         self.workers = {}
@@ -125,9 +136,13 @@ class Pool:
 
     def start(self):
         self.establish_baseline()
+        self.acct.start()
 
         while True:
             num_running, num_starting = self.update_workers()
+
+            self.acct.set_workers(num_running)
+
             self.update_stats(num_running, num_starting)
 
             total = num_running + num_starting
@@ -142,6 +157,7 @@ class Pool:
 
             time.sleep(1)
             self.process_queue()
+            self.acct.log()
 
     def establish_baseline(self):
         cpu = []
@@ -168,6 +184,8 @@ class Pool:
             try:
                 obj = self.pool_queue.get_nowait()
 
+                log.debug("Got obj %s" % obj)
+
                 wname = obj['wname']
 
                 if wname not in self.workers:
@@ -185,6 +203,10 @@ class Pool:
                 elif obj['msg'] == 'started':
                     worker['state'] = WorkerState.RUNNING
                     log.debug("Worker %s became ready" % worker['w'].name)
+                elif obj['msg'] == 'failed':
+                    log.debug("Worker %s reported failure" % worker['w'].name)
+                    worker['last_update'] = time.time()
+                    self.acct.add_failed()
 
             except Empty:
                 break
@@ -279,6 +301,7 @@ class Pool:
                 if since_update > self.zombie_timeout:
                     log.info("Worker %s zombied" % (worker['w'].name))
                     self.terminate_worker(worker)
+                    self.acct.add_zombie()
                 else:
                     num_running += 1
             elif state == WorkerState.STARTING:
