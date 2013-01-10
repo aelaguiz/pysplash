@@ -159,6 +159,8 @@ class Pool:
 
 
     def start(self):
+        self.start_time = time.time()
+
         self.establish_baseline()
         self.acct.start()
 
@@ -263,7 +265,7 @@ class Pool:
 
     def scale_pool(self, total_workers):
         # Collect enough stats to matter
-        if len(self.stats) < self.quiet_period_seconds:
+        if (time.time() - self.start_time) < self.quiet_period_seconds:
             return
 
         # Don't scale too frequently
