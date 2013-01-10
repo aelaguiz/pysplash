@@ -121,6 +121,11 @@ class Pool:
         # Maximum number of seconds waiting before we send a kill -9
         self.terminate_seconds = kwargs.setdefault('terminate_seconds', 10.0)
 
+        # Number of seconds to wait while gathering initial stats on workers
+        # before scaling up
+        self.quiet_period_seconds = kwargs.setdefault(
+            'quiet_period_seconds', 10.0)
+
         # Maximum cpu utilization
         self.max_cpu = kwargs.setdefault('max_cpu', 80.0)
 
@@ -258,7 +263,7 @@ class Pool:
 
     def scale_pool(self, total_workers):
         # Collect enough stats to matter
-        if len(self.stats) < 10:
+        if len(self.stats) < self.quiet_period_seconds:
             return
 
         # Don't scale too frequently
